@@ -1,8 +1,11 @@
 import cats.effect.{ExitCode, IO, IOApp}
-import doobie.{HC, HPS}
-import doobie.util.transactor.Transactor
 import doobie.implicits._
+import doobie.migration.DoobiePostgresMigration
+import doobie.util.transactor.Transactor
 import doobie.util.update.Update
+import doobie.{Get, HC, HPS, Put}
+
+import java.io.File
 
 object DoobieDemo extends IOApp {
 
@@ -81,7 +84,33 @@ object DoobieDemo extends IOApp {
     updateAction.compile.toList.transact(xa)
   }
 
-  override def run(args: List[String]): IO[ExitCode] =
-    saveMultipleActorsBy(List("Carl", "Tito", "Largo", "Cabezon", "Willy")).debug.as(ExitCode.Success)
+  // type classes
+  class ActorName(val value: String) {
+    override def toString: String = value
+
+    override def equals(obj: Any): Boolean = obj match {
+      case name: ActorName => value == name.value
+      case _ => false
+    }
+
+    override def hashCode(): Int = value.hashCode
+
+  }
+
+  object ActorName {
+    implicit val actorNameGet: Get[ActorName] = Get[String].map(str => new ActorName(str))
+    implicit val actorNamePut: Put[ActorName] = Put[String].contramap(actorName => actorName.value)
+  }
+
+
+
+  def findAllActorNamesCustomClass: IO[List[ActorName]] =
+    sql"select name from actors".query[ActorName].to[List].transact(xa)
+
+  override def run(args: List[String]): IO[ExitCode] = {
+    //DoobiePostgresMigration.executeMigrationsIO(new File("src/main/resources/migrations"), xa).as(ExitCode.Success)
+    //saveMultipleActorsBy(List("Carl", "Tito", "Largo", "Cabezon", "Willy")).debug.as(ExitCode.Success)
+    findAllActorNamesCustomClass.flatMap(list => IO(list.distinct)).debug.as(ExitCode.Success)
+  }
 
 }
