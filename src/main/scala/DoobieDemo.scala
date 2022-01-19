@@ -3,7 +3,7 @@ import doobie.implicits._
 import doobie.migration.DoobiePostgresMigration
 import doobie.util.transactor.Transactor
 import doobie.util.update.Update
-import doobie.{Get, HC, HPS, Put}
+import doobie.{Get, HC, HPS, Put, Read, Write}
 
 import java.io.File
 
@@ -102,15 +102,58 @@ object DoobieDemo extends IOApp {
     implicit val actorNamePut: Put[ActorName] = Put[String].contramap(actorName => actorName.value)
   }
 
+  // "value type"
+  case class DirectorId(id: Int)
 
+  case class DirectorName(name: String)
+
+  case class DirectorLastName(lastName: String)
+
+  case class Director(id: DirectorId, name: DirectorName, lastName: DirectorLastName)
+
+  object Director {
+    implicit val directorRead: Read[Director] = Read[(Int, String, String)].map {
+      case (id, name, lastName) => Director(DirectorId(id), DirectorName(name), DirectorLastName(lastName))
+    }
+
+    implicit val directorWrite: Write[Director] = Write[(Int, String, String)]
+      .contramap {
+        case Director(DirectorId(id), DirectorName(name), DirectorLastName(lastName)) => (id, name, lastName)
+      }
+  }
 
   def findAllActorNamesCustomClass: IO[List[ActorName]] =
     sql"select name from actors".query[ActorName].to[List].transact(xa)
 
+
+  import doobie.postgres._
+  import doobie.postgres.implicits._
+
+
+  // write large queries
+  def findMovieByTitle(title: String): IO[Option[Movie]] = {
+    val statement =
+      sql"""
+        SELECT m.id, m.title, m.year_of_production, array_agg(a.name) as actors, d.name || ' ' || d.last_name
+        FROM movies m
+            JOIN movies_actors ma ON m.id = ma.movie_id
+            JOIN actors a ON ma.actor_id = a.id
+            JOIN directors d ON m.director_id = d.id
+        WHERE m.title = $title
+        GROUP BY (m.id, m.title, m.year_of_production, d.name, d.last_name)
+        """
+    statement.query[Movie].option.transact(xa)
+  }
+
+  /*def findMovieByTitle_v2(title: String): IO[Option[Movie]] = {
+
+  }*/
+
   override def run(args: List[String]): IO[ExitCode] = {
     //DoobiePostgresMigration.executeMigrationsIO(new File("src/main/resources/migrations"), xa).as(ExitCode.Success)
     //saveMultipleActorsBy(List("Carl", "Tito", "Largo", "Cabezon", "Willy")).debug.as(ExitCode.Success)
-    findAllActorNamesCustomClass.flatMap(list => IO(list.distinct)).debug.as(ExitCode.Success)
+    findMovieByTitle("Zack Snyder's Justice League").debug.as(ExitCode.Success)
+    //findAllActorNamesCustomClass.flatMap(list => IO(list.distinct)).debug.as(ExitCode.Success)
   }
 
 }
