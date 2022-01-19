@@ -1,11 +1,13 @@
 import cats.effect.{ExitCode, IO, IOApp}
+import doobie._
+import cats.implicits._
 import doobie.implicits._
 import doobie.migration.DoobiePostgresMigration
 import doobie.util.transactor.Transactor
 import doobie.util.update.Update
-import doobie.{Get, HC, HPS, Put, Read, Write}
 
 import java.io.File
+import java.util.UUID
 
 object DoobieDemo extends IOApp {
 
@@ -145,14 +147,42 @@ object DoobieDemo extends IOApp {
     statement.query[Movie].option.transact(xa)
   }
 
-  /*def findMovieByTitle_v2(title: String): IO[Option[Movie]] = {
+  def findMovieByTitle_v2(title: String): IO[Option[Movie]] = {
+    def findMovieByTitle() =
+      sql"SELECT id, title, year_of_production, director_id FROM movies WHERE title = $title"
+        .query[(UUID, String, Int, Int)].option
 
-  }*/
+    def findDirectorById(directorId: Int) =
+      sql"SELECT name, last_name FROM directors WHERE id = $directorId"
+        .query[(String, String)].option
+
+    def findActorsByMovieId(movieId: UUID) =
+      sql"SELECT a.name FROM actors a JOIN movies_actors ma ON a.id = ma.actor_id WHERE ma.movie_id = $movieId"
+        .query[String].to[List]
+
+    val query = for {
+      maybeMovie <- findMovieByTitle()
+      maybeDirector <- maybeMovie match {
+        case Some((_, _, _, directorId)) => findDirectorById(directorId)
+        case None => Option.empty[(String, String)].pure[ConnectionIO]
+      }
+      actors <- maybeMovie match {
+        case Some((movieId, _, _, _)) => findActorsByMovieId(movieId)
+        case None => List.empty[String].pure[ConnectionIO]
+      }
+    } yield for {
+      (id, t, year, _) <- maybeMovie
+      (firstName, lastName) <- maybeDirector
+    } yield Movie(id.toString, t, year, actors, s"$firstName $lastName")
+
+    query.transact(xa)
+  }
 
   override def run(args: List[String]): IO[ExitCode] = {
     //DoobiePostgresMigration.executeMigrationsIO(new File("src/main/resources/migrations"), xa).as(ExitCode.Success)
     //saveMultipleActorsBy(List("Carl", "Tito", "Largo", "Cabezon", "Willy")).debug.as(ExitCode.Success)
-    findMovieByTitle("Zack Snyder's Justice League").debug.as(ExitCode.Success)
+    //findMovieByTitle("Zack Snyder's Justice League").debug.as(ExitCode.Success)
+    findMovieByTitle_v2("Zack Snyder's Justice League").debug.as(ExitCode.Success)
     //findAllActorNamesCustomClass.flatMap(list => IO(list.distinct)).debug.as(ExitCode.Success)
   }
 
